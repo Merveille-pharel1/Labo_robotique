@@ -52,7 +52,7 @@ int retournerDistance(unsigned long ct){
 
   lastDistance = localDistance;
 
-  return distance;
+  return localDistance;
 }
 
 void affichageSerie(unsigned long ct){
@@ -102,7 +102,6 @@ void drawHouse(){
   screen.drawRect(3, screen.height()/4, (screen.width()/4 - 6), 20, SSD1306_WHITE);
   screen.drawRect(screen.width()/8, (screen.height()/4 + 10), 8, 10, SSD1306_WHITE);
 
-  screen.display();
 }
 
 void drawName(){
@@ -112,7 +111,6 @@ void drawName(){
   screen.setCursor(1,50);             
   screen.println(F("Pharel"));
 
-  screen.display();
 }
 
 void verifyState(){
