@@ -25,7 +25,10 @@ const int m2_in1 = 47; // M1 ENB
 const int m2_in2 = 46; // M1 ENA
 
 const int minLed = 6;
-const int maxLed = 12; 
+const int maxLed = 12;
+
+const int maxDanger = 40;
+const int maxRalentir = 80;
 
 enum State {NORMAL, RALENTI, DANGER, RONDE};
 enum StateDanger {ARRET, RECUL, PIVOT};
@@ -58,21 +61,22 @@ void normalState(unsigned long ct){
   if(firstTime){
     Serial.println("Entrée etat: Normal");
     firstTime = 0;
-    vitesse = 0.7 * maxVitesse;
 
+    //Allumer les Leds
     onLeds(0, 255, 0);
+
+    // Moteur 
+    vitesse = 0.7 * maxVitesse;
+    digitalWrite(m1_in2, LOW);
+    digitalWrite(m1_in1, HIGH);
+    analogWrite(m1_pwm, vitesse);
+
+    digitalWrite(m2_in2, LOW);
+    digitalWrite(m2_in1, HIGH);
+    analogWrite(m2_pwm, vitesse);
   }
 
-
-  digitalWrite(m1_in2, LOW);
-  digitalWrite(m1_in1, HIGH);
-  analogWrite(m1_pwm, vitesse);
-
-  digitalWrite(m2_in2, LOW);
-  digitalWrite(m2_in1, HIGH);
-  analogWrite(m2_pwm, vitesse);
-
-  bool transition = distance < 80;
+  bool transition = distance < maxRalentir;
 
   if(transition){
 
@@ -93,20 +97,23 @@ void ralentiState(unsigned long ct){
   if(firstTime){
     Serial.println("Entrée etat: Ralenti");
     firstTime = 0;
-    vitesse = 0.5 * maxVitesse;
+    
+    //Allumer les Leds
     onLeds(0, 0, 255 );
+
+    //Moteur
+    vitesse = 0.5 * maxVitesse;
+
+    digitalWrite(m1_in2, LOW);
+    digitalWrite(m1_in1, HIGH);
+    analogWrite(m1_pwm, vitesse);
+
+    digitalWrite(m2_in2, LOW);
+    digitalWrite(m2_in1, HIGH);
+    analogWrite(m2_pwm, vitesse);
   }
 
-  digitalWrite(m1_in2, LOW);
-  digitalWrite(m1_in1, HIGH);
-  analogWrite(m1_pwm, vitesse);
-
-  digitalWrite(m2_in2, LOW);
-  digitalWrite(m2_in1, HIGH);
-  analogWrite(m2_pwm, vitesse);
-  
-
-  bool transitionDanger = distance < 40;
+  bool transitionDanger = distance < maxDanger;
 
   if(transitionDanger){
 
@@ -118,7 +125,7 @@ void ralentiState(unsigned long ct){
   }
 
 
-  bool transitionNormal = distance >= 80;
+  bool transitionNormal = distance >= maxRalentir;
 
   if(transitionNormal){
 
@@ -135,9 +142,6 @@ void dangerState(unsigned long ct){
 
   static bool firstTime = 1;
   static unsigned long lastTime = 0;
-  const int delayArret = 500;
-  const int delayRecul = 1000;
-  const int delayPivot = 1800;
 
   if(firstTime){
     Serial.println("Entrée etat: Danger");
@@ -156,43 +160,20 @@ void dangerState(unsigned long ct){
   }
 
   if(stateDanger == ARRET){
-    Serial.print(ct - lastTime);
-    Serial.println("\tARRET");
-    if(ct - lastTime < delayArret) {
-      analogWrite(m1_pwm, 0);
-      analogWrite(m2_pwm, 0);
-      return;
-    }
-
-    lastTime = ct;
-    stateDanger = RECUL;
+    arretState(ct);
+    return;
   }
 
   if(stateDanger == RECUL){
-    Serial.print(ct - lastTime);
-    Serial.println("\tRecul");
-    if(ct - lastTime < delayRecul) {
-      analogWrite(m1_pwm, vitesse);
-      analogWrite(m2_pwm, vitesse);
-      return;
-    }
-
-    lastTime = ct;
-    stateDanger = PIVOT;
+    reculState(ct);
+    return;
   }
 
   if(stateDanger == PIVOT){
-    if(ct - lastTime < delayPivot) { 
-      analogWrite(m1_pwm, 0);
-      analogWrite(m2_pwm, vitesse);
-      return;
-    }
-
-    lastTime = ct;
-    stateDanger = ARRET;  
+    pivotState(ct);
   }
-
-  bool transitionRalentir = distance >= 40 and distance < 80;
+  
+  bool transitionRalentir = distance >= maxDanger && distance < maxRalentir;
 
   if(transitionRalentir){
 
@@ -203,7 +184,7 @@ void dangerState(unsigned long ct){
     return;
   }
 
-  bool transitionNormal = distance >= 80;
+  bool transitionNormal = distance >= maxRalentir;
 
   if(transitionNormal){
 
@@ -213,6 +194,69 @@ void dangerState(unsigned long ct){
     Serial.println("Sortie etat: Danger");
   }
 
+}
+
+void arretState(unsigned long ct){
+  const int exitTime;
+  const int rate = 500;
+  static bool firstTime = 1;
+
+  if(firstTime){
+    analogWrite(m1_pwm, 0);
+    analogWrite(m2_pwm, 0);
+
+    exitTime = ct + rate;
+    firstTime = 0;
+  } 
+
+  bool transition = ct > exitTime;
+
+  if (transition){
+    stateDanger = RECUL;
+    firstTime = 1;
+  }
+}
+
+void reculState(unsigned long ct){
+  const int exitTime;
+  const int rate = 1000;
+  static bool firstTime = 1;
+
+  if(firstTime){
+    analogWrite(m1_pwm, vitesse);
+    analogWrite(m2_pwm, vitesse);
+
+    exitTime = ct + rate;
+    firstTime = 0;
+  } 
+
+  bool transition = ct > exitTime;
+
+  if (transition){
+    stateDanger = PIVOT;
+    firstTime = 1;
+  }
+}
+
+void pivotState(unsigned long ct){
+  const int exitTime;
+  const int rate = 1800;
+  static bool firstTime = 1;
+
+  if(firstTime){
+    analogWrite(m1_pwm, 0);
+    analogWrite(m2_pwm, vitesse);
+
+    exitTime = ct + rate;
+    firstTime = 0;
+  } 
+
+  bool transition = ct > exitTime;
+
+  if (transition){
+    stateDanger = ARRET;
+    firstTime = 1;
+  }
 }
 
 void onLeds(int red, int green, int blue){
@@ -252,6 +296,24 @@ void manageState(unsigned long ct){
   
 }
 
+void manageDanger(unsigned long ct){
+
+  switch(stateDanger){
+    case ARRET:
+      arretState(ct);
+      break;
+    
+    case RECUL:
+      reculState(ct);
+      break;
+
+    case PIVOT:
+      pivotState(ct);
+      break;
+  }
+  
+}
+
 void setup() {
   
   Serial.begin(115200);
@@ -260,17 +322,11 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
 
   currentTime = millis();
 
   distance = retournerDistance(currentTime);
 
   manageState(currentTime);
-
-  // Serial.print("Distance: ");
-  // Serial.println(distance);
-  // Serial.print("\tState: ");
-  // Serial.println(state);
   
 }
