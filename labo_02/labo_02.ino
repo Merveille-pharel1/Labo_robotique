@@ -11,6 +11,10 @@ MeRGBLed led( 0, LEDNUM );
 int distance;
 unsigned long currentTime;
 
+int red;
+int green;
+int blue;
+
 const int lastValue = 400;
 
 const int maxVitesse = 255; 
@@ -26,6 +30,9 @@ const int m2_in2 = 46; // M1 ENA
 
 const int minLed = 6;
 const int maxLed = 12;
+
+const float propNormal = 0.7;
+const float propRalenti = 0.5;
 
 const int maxDanger = 40;
 const int maxRalentir = 80;
@@ -55,18 +62,26 @@ int retournerDistance(unsigned long ct){
 
 void normalState(unsigned long ct){
 
+  static unsigned long enterRonde; 
   static bool firstTime = 1;
   static unsigned long lastTime = 0;
+  const int countTime = 5000;
 
   if(firstTime){
     Serial.println("Entrée etat: Normal");
     firstTime = 0;
 
+    enterRonde = ct + countTime;
+
     //Allumer les Leds
-    onLeds(0, 255, 0);
+    red = 0; 
+    green = 255; 
+    blue = 0;
+
+    onLeds();
 
     // Moteur 
-    vitesse = 0.7 * maxVitesse;
+    vitesse = propNormal * maxVitesse;
     digitalWrite(m1_in2, LOW);
     digitalWrite(m1_in1, HIGH);
     analogWrite(m1_pwm, vitesse);
@@ -76,13 +91,23 @@ void normalState(unsigned long ct){
     analogWrite(m2_pwm, vitesse);
   }
 
+  bool transitionRonde = ct > enterRonde;
+
+  if(transitionRonde){
+    state = RONDE;
+    firstTime = 1;
+
+    Serial.println("Sortie etat: Normal");
+    return;
+  }
+
   bool transition = distance < maxRalentir;
 
   if(transition){
 
     state = RALENTI;
     firstTime = 1;
-
+    
     Serial.println("Sortie etat: Normal");
   }
 
@@ -99,10 +124,14 @@ void ralentiState(unsigned long ct){
     firstTime = 0;
     
     //Allumer les Leds
-    onLeds(0, 0, 255 );
+    red = 0; 
+    green = 0; 
+    blue = 255;
+
+    onLeds();
 
     //Moteur
-    vitesse = 0.5 * maxVitesse;
+    vitesse = propRalenti * maxVitesse;
 
     digitalWrite(m1_in2, LOW);
     digitalWrite(m1_in1, HIGH);
@@ -147,9 +176,13 @@ void dangerState(unsigned long ct){
     Serial.println("Entrée etat: Danger");
     firstTime = 0;
 
-    vitesse = 0.7 * maxVitesse;
+    vitesse = propNormal * maxVitesse;
 
-    led.setColor(255, 0, 0 );
+    red = 255;
+    green = 0;
+    blue = 0;
+
+    led.setColor(red, green, blue);
     led.show();
 
     digitalWrite(m1_in2, HIGH);
@@ -171,7 +204,9 @@ void dangerState(unsigned long ct){
 
   if(stateDanger == PIVOT){
     pivotState(ct);
+    if(stateDanger != ARRET) return;
   }
+
   
   bool transitionRalentir = distance >= maxDanger && distance < maxRalentir;
 
@@ -197,9 +232,10 @@ void dangerState(unsigned long ct){
 }
 
 void arretState(unsigned long ct){
-  const int exitTime;
+  static unsigned long exitTime;
   const int rate = 500;
   static bool firstTime = 1;
+
 
   if(firstTime){
     analogWrite(m1_pwm, 0);
@@ -218,7 +254,7 @@ void arretState(unsigned long ct){
 }
 
 void reculState(unsigned long ct){
-  const int exitTime;
+  static unsigned long exitTime;
   const int rate = 1000;
   static bool firstTime = 1;
 
@@ -239,8 +275,8 @@ void reculState(unsigned long ct){
 }
 
 void pivotState(unsigned long ct){
-  const int exitTime;
-  const int rate = 1800;
+  static unsigned long exitTime;
+  const int rate = 1500;
   static bool firstTime = 1;
 
   if(firstTime){
@@ -259,7 +295,58 @@ void pivotState(unsigned long ct){
   }
 }
 
-void onLeds(int red, int green, int blue){
+void rondeState(unsigned long ct){
+
+  static unsigned long exitTime;
+  const int rate = 2000;
+  static bool firstTime = 1;
+
+  if(firstTime){
+    Serial.println("Entré etat: Ronde");
+    
+    red = 0;
+    green = 255;
+    blue = 0;
+
+    exitTime = ct + rate;
+    firstTime = 0;
+  } 
+
+  clignoteTask(ct);
+
+  bool transition = ct > exitTime;
+
+  if (transition){
+    state = NORMAL;
+    stateDanger = ARRET;
+    firstTime = 1;
+    Serial.println("Sortie etat: Ronde");
+  }
+
+}
+
+void clignoteTask(unsigned long ct){
+
+  static unsigned long lastTime = 0;
+  static bool onOff = 1; 
+  const int rate = 125;
+
+  if(ct - lastTime < rate) return;
+
+  lastTime = ct;
+
+  if(onOff)
+    led.setColor(red, green, blue );
+  else
+    led.setColor(0, 0, 0);
+
+  led.show();
+
+  onOff = !onOff;
+
+}
+
+void onLeds(){
 
   led.setColor(0, 0, 0);
 
@@ -268,10 +355,6 @@ void onLeds(int red, int green, int blue){
   }
 
   led.show();
-}
-
-void rondeState(unsigned long ct){
-
 }
 
 void manageState(unsigned long ct){
