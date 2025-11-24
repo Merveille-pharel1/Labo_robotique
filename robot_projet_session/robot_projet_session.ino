@@ -1,5 +1,6 @@
 #include <MeAuriga.h>
 #include <Adafruit_seesaw.h>
+#include <ArduinoJson.h>
 
 #define NB_IR 5
 #define PULSE 9
@@ -20,18 +21,24 @@ MeUltrasonicSensor ultraSensor(PORT_10);
 
 Adafruit_seesaw ss;
 
+StaticJsonDocument<128> doc;
+
 MeEncoderOnBoard encoderRight(SLOT1);
 MeEncoderOnBoard encoderLeft(SLOT2);
 
 float distance = 0;
 const int lastValue = 400;
+int distanceObjet = 30;
 
-short vitesse = 110;
+short vitesse = 100;
 short vitessePivot = 100;
+
+
 unsigned long currentTime = 0;
+unsigned long chrono = 0;
 
 short maxAngle = 360;
-short anglePivot = 180;
+short semiCirc = 180;
 
 int tolerance = 2;
 
@@ -40,8 +47,13 @@ float position;
 
 bool isOff = 1;
 
-enum State {CALIBRATION, ONLINE, VIGILENCE, TURN};
-State state = ONLINE;
+enum State {CALIBRATION, ONLINE, VIGILENCE, EMBRANCHEMENT, LEFT, RIGHT, ARRET};
+State state = CALIBRATION;
+
+enum StateT {LEFT2, RIGHT2, STOP};
+StateT stateT = LEFT2;
+
+String serialMessage = "";
 
 #pragma region configuration - encodeur
 
@@ -179,8 +191,46 @@ void calibrer(){
 
 }
 
+bool spinRight(short speed, short targetAngle, bool firstRun = 0) {
 
-bool spin(short speed, short targetAngle, bool firstRun = 0){
+    static double zAngleGoal = 0.0;
+    static int turn_goal = 0;
+    static int turn = 0;
+    static int last_zone = 0;
+    const int intervalle = 20;
+
+    if (firstRun) {
+        gyro.resetData();
+        zAngleGoal = gyro.getAngleZ() + targetAngle - tolerance;
+
+        if(targetAngle > semiCirc) 
+            zAngleGoal -= maxAngle;
+
+        turn_goal = (targetAngle - tolerance) / semiCirc;
+        turn = 0;
+        last_zone = 0;
+
+        return false;
+    }
+
+    encoderLeft.setMotorPwm(speed);
+    encoderRight.setMotorPwm(speed);
+
+    double angle = gyro.getAngleZ();
+    static int previousSign = 0;
+
+    int sign = (angle > 0) - (angle < 0);
+
+    if (semiCirc - abs(angle) < intervalle && sign != previousSign && previousSign != 0)
+        turn++;
+
+    previousSign = sign;
+
+    return turn == turn_goal && angle > zAngleGoal;
+}
+
+
+bool spinLeft(short speed, short targetAngle, bool firstRun = 0){  // à modifier
 
   static double zAngleGoal = 0.0;
   short cummulAngle = 0;
@@ -194,9 +244,9 @@ bool spin(short speed, short targetAngle, bool firstRun = 0){
     return false;
   }
 
-  encoderLeft.setMotorPwm(speed);
-  encoderRight.setMotorPwm(speed);
-
+  encoderLeft.setMotorPwm(-speed);
+  encoderRight.setMotorPwm(-speed);
+  
   if(targetAngle > maxAngle / 2){
 
     if(gyro.getAngleZ() < 0){
@@ -207,32 +257,10 @@ bool spin(short speed, short targetAngle, bool firstRun = 0){
     return 0;
   }
 
-  return gyro.getAngleZ() > zAngleGoal - tolerance;
+  return gyro.getAngleZ() < zAngleGoal + tolerance;
 
 }
 
-void calibrationAutomatique(){
-
-  spin(vitesse, anglePivot, 1);
-
-
-  while(!spin(vitesse, anglePivot)){
-    Serial.println("ici");
-    calibrer();
-    //gyroTask();
-  }
-
-  offMotors();
-
-   for(int i = 0; i < NB_IR; i++){
-        Serial.print("IR"); Serial.print(i); Serial.print(":");
-        Serial.print(" min  ");
-        Serial.print(capteurs[i].valeurMin);
-        Serial.print(" max  ");
-        Serial.println(capteurs[i].valeurMax);
-   }
-
-}
 
 int capteurNormalisee(int index){
   return ((capteurs[index].valeurLue - capteurs[index].valeurMin) * 1.0) / (capteurs[index].valeurMax - capteurs[index].valeurMin) * 1000.0;
@@ -306,7 +334,99 @@ bool checkLine(unsigned long ct){
 
 }
 
-void suivreLigne(short speed, float adjustment){
+bool allOnLine(unsigned long ct){
+
+  bool onLine = 1;
+  const int tolerenceInterval = 150;
+
+  for(int i = 0; i < NB_IR; i++){
+
+    if(capteurs[i].valeurMax - capteurs[i].valeurLue < tolerenceInterval)
+      onLine = 0;
+
+  }
+
+  return onLine;
+
+}
+
+bool capteLineLeft(){
+
+  bool onLine = 1;
+  const int tolerenceInterval = 150;
+  const int nb_ir = 3;
+  
+
+  for(int i = 0; i < nb_ir; i++){
+
+    if(capteurs[i].valeurMax - capteurs[i].valeurLue < tolerenceInterval)
+      onLine = 0;
+
+  }
+
+  return onLine;
+
+}
+
+bool capteLineRight(){
+
+  bool onLine = 1;
+  const int tolerenceInterval = 150;
+  const int nb_ir = 2;
+  
+
+  for(int i = nb_ir; i < NB_IR; i++){
+
+    if(capteurs[i].valeurMax - capteurs[i].valeurLue < tolerenceInterval)
+      onLine = 0;
+
+  }
+
+  return onLine;
+
+}
+
+bool turn(short angle){
+
+  static bool firstTime = 1;
+
+  if(firstTime){
+    firstTime = 0;
+
+    if(angle >= 0)
+      spinRight(vitessePivot, angle, 1);
+    else
+      spinLeft(vitessePivot, angle, 1);
+  }
+
+  if(angle >= 0)
+    firstTime = spinRight(vitessePivot, angle);
+  else
+    firstTime = spinLeft(vitessePivot, angle);
+
+  return firstTime;
+
+}
+
+void attente(bool firstTime = 0){
+
+  const int rate = 500;
+  static unsigned long lastTime = millis();
+
+  if(firstTime) {
+    lastTime = millis();
+    offMotors();
+  }
+
+  while(millis() - lastTime < rate){}
+
+  lastTime = millis();
+
+}
+
+void suivreLigne(short speed, float adjustment = 0){
+
+
 
   encoderLeft.setMotorPwm(speed - (int)adjustment);
   encoderRight.setMotorPwm(-speed - (int)adjustment);
@@ -324,12 +444,13 @@ void calibrationState(unsigned long ct){
   if(firstTime){
     firstTime = 0;
 
-    spin(vitesse, anglePivot, 1);
+    spinRight(vitessePivot, maxAngle, 1);
   }
 
   calibrer();
 
-  bool transition = spin(vitesse, anglePivot);
+  bool transition = spinRight(vitessePivot, maxAngle);
+  
 
   if (transition){
     state = ONLINE;
@@ -342,18 +463,24 @@ void calibrationState(unsigned long ct){
 void onlineState(unsigned long ct, float adjustment){
 
   static bool firstTime = 1;
-
-  // if(firstTime){
-  //   firstTime = 0;
-  // }
+  short ecart = 10;
 
   suivreLigne(vitesse, adjustment);
 
-  bool transition = distance < 50;
+  bool transition = distance < distanceObjet + ecart;
 
   if(transition){
 
     state = VIGILENCE;
+    firstTime = 1;
+    
+  }
+
+  bool transitionEnd = checkLine(ct);
+
+  if(transitionEnd){
+
+    state = ARRET;
     firstTime = 1;
     
   }
@@ -363,59 +490,155 @@ void onlineState(unsigned long ct, float adjustment){
 void vigilenceState(unsigned long ct, float adjustment){
 
   static bool firstTime = 1;
+  static bool isallOn = 0;
+  static bool isLeftOn = 0;
+  static bool isRightOn = 0;
+
   short vitesseVig;
   
 
   if(firstTime){
     firstTime = 0;
-    vitesseVig = vitesse * 0.5;
+    vitesseVig = vitesse * 0.7;
   }
 
   suivreLigne(vitesseVig, adjustment);
 
-  bool transition = checkLine(ct);
+  if(allOnLine(ct))
+    isallOn = 1;
+
+  bool transition = isallOn && checkLine(ct);
 
   if(transition){
 
+    isallOn = 0;
     offMotors();
-    state = TURN;
+    state = EMBRANCHEMENT;
     firstTime = 1;
+    return; 
+  }
+
+
+  if(capteLineLeft())
+    isLeftOn = 1;
+
+  bool transitionLeft = isLeftOn && checkLine(ct);
+
+  if(transitionLeft){
+
+    isLeftOn = 0;
+    offMotors();
+    state = LEFT;
+    firstTime = 1;
+    return;
+    
+  }
+
+  if(capteLineRight())
+    isRightOn = 1;
+
+  bool transitionRight = isRightOn && checkLine(ct);
+
+  if(transitionRight){
+
+    isRightOn = 0;
+    offMotors();
+    state = RIGHT;
+    firstTime = 1;
+    return;
     
   }
   
 }
 
-void turnState(unsigned long ct){
+void leftState(unsigned long ct){
+
+  const short leftAngle = -90;
+
+  bool transition = turn(leftAngle);
+
+  if(transition){
+    state = ONLINE;
+    offMotors();
+  }
+
+}
+
+void rightState(unsigned long ct){
+
+  const short rightAngle = 90;
+
+  bool transition = turn(rightAngle);
+
+  if(transition){
+    state = ONLINE;
+    offMotors();
+  }
+
+}
+
+void embranchementState(unsigned long ct){
 
   static bool firstTime = 1;
-  // static unsigned long lastTime = ct;
-  // const int rate = 1000;
+  const short leftAngle = -90;
+  const short rightAngle = 180;
 
-  // if (ct - lastTime < rate) return;
+  if(stateT == LEFT2){
 
-  // lastTime = ct;
+    if(!turn(leftAngle) ) return;
+    attente(firstTime);
 
-  if(firstTime){
-    firstTime = 0;
+    if(distance > distanceObjet){
+      firstTime = 1;
+      state = ONLINE;
+      return;
+    } 
+    else {
+      stateT = RIGHT2;
+    }
 
-    spin(vitessePivot, anglePivot, 1);
   }
-
-  bool transition = spin(vitessePivot, anglePivot);
-
-  if(transition){
-
-    offMotors();
-    state = ONLINE;
-    firstTime = 1;
     
+
+ if(stateT == RIGHT2){
+    if(!turn(rightAngle)) return;
+    
+    attente(firstTime);
+
+    if(distance <= distanceObjet){
+
+      if(!turn(leftAngle)) return;
+
+      Serial.println("Pris");
+      stateT = STOP;
+
+    } else{
+      firstTime = 1;
+      state = ONLINE;
+      stateT = LEFT2;
+
+    }
+        
   }
-  
+
+  firstTime = 0;
+
 }
 
+void arretState(unsigned long ct){
 
+  static bool firstTime = 1;
+
+  if(firstTime){
+    offMotors();
+  }
+
+}
 
 void stateManager(unsigned long ct, float adjustment) {
+
+  static bool firstTime = 1;
+  static unsigned long initial;
 
   switch (state){
 
@@ -424,6 +647,12 @@ void stateManager(unsigned long ct, float adjustment) {
       break;
 
     case ONLINE:
+
+      if(firstTime){
+        initial = ct;
+        firstTime = 0;
+      }
+
       onlineState(ct, adjustment);
       break;
 
@@ -431,9 +660,22 @@ void stateManager(unsigned long ct, float adjustment) {
       vigilenceState(ct, adjustment);
       break;
 
-    case TURN:
-      turnState(ct);
+    case EMBRANCHEMENT:
+      embranchementState(ct);
       break;
+
+    case LEFT:
+      leftState(ct);
+      break;
+
+    case RIGHT:
+      rightState(ct);
+      break;
+
+    case ARRET:
+      arretState(ct);
+      break;
+    
   }
     
 }
@@ -472,6 +714,8 @@ void loop() {
 
   stateManager(currentTime, adjustment);
 
+  serialTask(currentTime);
+
   gyroTask();
   encodersTask(currentTime);
 }
@@ -497,5 +741,32 @@ float retournerDistance(unsigned long ct){
   return localDistance;
 }
 
-#pragma endregion
+void serialTask(unsigned long ct){
 
+  unsigned long lastSend = 0;
+  const int timeSend = 1000;
+
+  if(ct - lastSend < timeSend) return;
+
+  lastSend = ct;
+
+  doc["ts"] = ct; 
+  doc["gz"] = gyro.getAngleZ();
+  doc["etat"] = state; 
+
+  JsonObject pwm = doc.createNestedObject("pwm"); 
+  pwm["l"] = encoderLeft.getCurPwm(); 
+  pwm["r"] = encoderRight.getCurPwm(); 
+
+  JsonArray capt = doc.createNestedArray("capt"); 
+  
+  for(int i = 0; i < NB_IR; i++){
+    capt.add(capteurs[i].valeurNormalisee);
+  }
+
+  serializeJson(doc, serialMessage); 
+  Serial.println(serialMessage); 
+
+}
+
+#pragma endregion
