@@ -1,0 +1,43 @@
+{
+  "header": [
+    255,
+    85
+  ],
+  "directions": {
+    "w": "F",
+    "a": "L",
+    "s": "B",
+    "d": "R",
+    "e": "K",
+    "stop": "S"
+  },
+  "actions": [
+    {
+      "key": "G",
+      "data": "GO",
+      "label": "Start"
+    },
+    {
+      "key": "P",
+      "data": "STOP",
+      "label": "Stop"
+    },
+    {
+      "key": "M",
+      "data": "MAN",
+      "label": "Mode Manuel"
+    },
+    {
+      "key": "O",
+      "data": "T",
+      "label": "Stop Manual"
+    },
+    {
+      "key": "L",
+      "data": "C",
+      "label": "Calibration"
+    }
+
+
+  ]
+}
